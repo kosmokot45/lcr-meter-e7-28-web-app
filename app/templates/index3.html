@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LCR Meter Controller</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/jquery@3.6.0/dist/jquery.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 20px;
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+        .panel {
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            padding: 20px;
+            flex: 1;
+            min-width: 300px;
+        }
+        h1, h2 {
+            color: #333;
+            margin-top: 0;
+        }
+        .control-group {
+            margin-bottom: 15px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+        select, input, button {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            box-sizing: border-box;
+        }
+        button {
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            cursor: pointer;
+            margin-top: 5px;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        button:disabled {
+            background-color: #cccccc;
+        }
+        .status {
+            padding: 10px;
+            border-radius: 4px;
+            margin-top: 10px;
+        }
+        .connected {
+            background-color: #dff0d8;
+            color: #3c763d;
+        }
+        .disconnected {
+            background-color: #f2dede;
+            color: #a94442;
+        }
+        .chart-container {
+            position: relative;
+            height: 300px;
+            width: 100%;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        th, td {
+            border: 1px solid #ddd;
+            padding: 8px;
+            text-align: left;
+        }
+        th {
+            background-color: #f2f2f2;
+        }
+        tr:nth-child(even) {
+            background-color: #f9f9f9;
+        }
+        .data-table {
+            max-height: 300px;
+            overflow-y: auto;
+        }
+    </style>
+</head>
+<body>
+    <h1>LCR Meter Controller</h1>
+    
+    <div class="container">
+        <div class="panel">
+            <h2>Connection</h2>
+            <select id="portSelect">
+                {% for port in ports %}
+                <option value="{{ port }}">{{ port }}</option>
+                {% endfor %}
+            </select>
+            <button id="connectBtn">Connect</button>
+            <button id="disconnectBtn" disabled>Disconnect</button>
+            <div id="connectionStatus" class="status disconnected">Disconnected</div>
+            <div id="deviceInfo"></div>
+        </div>
+        
+        <div class="panel">
+            <h2>Configuration</h2>
+            <div>
+                <label>Frequency (Hz):</label>
+                <input type="number" id="frequency" value="1000" min="20" max="100000">
+            </div>
+            <div>
+                <label>Mode:</label>
+                <select id="mode">
+                    <option value="Z">Impedance (Z)</option>
+                    <option value="L">Inductance (L)</option>
+                    <option value="C">Capacitance (C)</option>
+                    <option value="R">Resistance (R)</option>
+                    <option value="θ">Phase Angle (θ)</option>
+                </select>
+            </div>
+            <div>
+                <label>Speed:</label>
+                <select id="speed">
+                    <option value="fast">Fast</option>
+                    <option value="normal" selected>Normal</option>
+                    <option value="average">Average</option>
+                </select>
+            </div>
+            <button id="updateConfigBtn">Update Configuration</button>
+        </div>
+        
+        <div class="panel">
+            <h2>Measurement Control</h2>
+            <button id="startMeasureBtn">Start Measurement</button>
+            <button id="stopMeasureBtn" disabled>Stop Measurement</button>
+            <button id="exportDataBtn">Export CSV</button>
+        </div>
+    </div>
+    
+    <div class="container">
+        <div class="panel" style="flex: 2;">
+            <h2>Measurement Data</h2>
+            <div id="chart1" class="chart"></div>
+            <div id="chart2" class="chart"></div>
+        </div>
+    </div>
+    
+    <script>
+        // Connection management
+        document.getElementById('connectBtn').addEventListener('click', async () => {
+            const port = document.getElementById('portSelect').value;
+            try {
+                const response = await axios.post('/api/connect', { port });
+                if (response.data.success) {
+                    document.getElementById('connectionStatus').className = 'status connected';
+                    document.getElementById('connectionStatus').textContent = 'Connected';
+                    document.getElementById('connectBtn').disabled = true;
+                    document.getElementById('disconnectBtn').disabled = false;
+                    document.getElementById('deviceInfo').textContent = response.data.device || '';
+                } else {
+                    alert(`Connection failed: ${response.data.message}`);
+                }
+            } catch (error) {
+                alert('Connection error: ' + error.message);
+            }
+        });
+        
+        document.getElementById('disconnectBtn').addEventListener('click', async () => {
+            try {
+                const response = await axios.post('/api/disconnect');
+                if (response.data.success) {
+                    document.getElementById('connectionStatus').className = 'status disconnected';
+                    document.getElementById('connectionStatus').textContent = 'Disconnected';
+                    document.getElementById('connectBtn').disabled = false;
+                    document.getElementById('disconnectBtn').disabled = true;
+                    document.getElementById('deviceInfo').textContent = '';
+                }
+            } catch (error) {
+                alert('Disconnection error: ' + error.message);
+            }
+        });
+        
+        // Configuration
+        document.getElementById('updateConfigBtn').addEventListener('click', async () => {
+            const config = {
+                frequency: parseInt(document.getElementById('frequency').value),
+                mode: document.getElementById('mode').value,
+                speed: document.getElementById('speed').value
+            };
+            
+            try {
+                await axios.post('/api/config', config);
+                alert('Configuration updated successfully');
+            } catch (error) {
+                alert('Configuration update failed: ' + error.message);
+            }
+        });
+        
+        // Measurement control
+        document.getElementById('startMeasureBtn').addEventListener('click', async () => {
+            try {
+                await axios.post('/api/measure/start');
+                document.getElementById('startMeasureBtn').disabled = true;
+                document.getElementById('stopMeasureBtn').disabled = false;
+                startDataRefresh();
+            } catch (error) {
+                alert('Failed to start measurement: ' + error.message);
+            }
+        });
+        
+        document.getElementById('stopMeasureBtn').addEventListener('click', async () => {
+            try {
+                await axios.post('/api/measure/stop');
+                document.getElementById('startMeasureBtn').disabled = false;
+                document.getElementById('stopMeasureBtn').disabled = true;
+                stopDataRefresh();
+            } catch (error) {
+                alert('Failed to stop measurement: ' + error.message);
+            }
+        });
+        
+        document.getElementById('exportDataBtn').addEventListener('click', async () => {
+            try {
+                const response = await axios.get('/api/measure/export', { responseType: 'blob' });
+                const url = window.URL.createObjectURL(new Blob([response.data]));
+                const link = document.createElement('a');
+                link.href = url;
+                link.setAttribute('download', 'lcr_measurements.csv');
+                document.body.appendChild(link);
+                link.click();
+                link.remove();
+            } catch (error) {
+                alert('Export failed: ' + error.message);
+            }
+        });
+        
+        // Chart setup and data refresh
+        let refreshInterval;
+        let chart1, chart2;
+        
+        function initCharts() {
+            chart1 = Plotly.newPlot('chart1', [{
+                y: [],
+                type: 'line',
+                name: 'Value'
+            }], {
+                title: 'Measurement Value',
+                xaxis: { title: 'Time' },
+                yaxis: { title: 'Value' }
+            });
+            
+            chart2 = Plotly.newPlot('chart2', [{
+                y: [],
+                type: 'line',
+                name: 'Phase Angle'
+            }], {
+                title: 'Phase Angle',
+                xaxis: { title: 'Time' },
+                yaxis: { title: 'Degrees' }
+            });
+        }
+        
+        async function updateCharts() {
+            try {
+                const response = await axios.get('/api/measure/data');
+                const data = response.data;
+                
+                if (data.length > 0) {
+                    const timestamps = data.map(d => d.timestamp);
+                    const values = data.map(d => d.value || 0);
+                    const phases = data.map(d => d.phase_deg || 0);
+                    
+                    Plotly.update('chart1', {
+                        x: [timestamps],
+                        y: [values]
+                    });
+                    
+                    Plotly.update('chart2', {
+                        x: [timestamps],
+                        y: [phases]
+                    });
+                }
+            } catch (error) {
+                console.error('Error updating charts:', error);
+            }
+        }
+        
+        function startDataRefresh() {
+            updateCharts();
+            refreshInterval = setInterval(updateCharts, 1000);
+        }
+        
+        function stopDataRefresh() {
+            if (refreshInterval) {
+                clearInterval(refreshInterval);
+            }
+        }
+        
+        // Initialize
+        window.onload = function() {
+            initCharts();
+        };
+    </script>
+</body>
+</html>
